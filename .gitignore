@@ -1,0 +1,17 @@
+# Build artifacts
+*.o
+*.out
+*.exe
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+
+# Editor
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
