@@ -5,8 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 #define PORT "8080"
+#define BACKLOG 10
 
 /**
  * get sockaddr, IPv4 or Ipv6;
@@ -33,7 +36,7 @@ char *get_current_time(char *buf, size_t size)
 {
     time_t unix_current_time = time(NULL);
     struct tm *tm = localtime(&unix_current_time);
-    strftime(buf, size, "%Y-%m-%d %H:%M:%S", tm);
+    strftime(buf, size, "%Y-%m-%d %H:%M:%S\n", tm);
     return buf;
 }
 
@@ -42,10 +45,15 @@ char *get_current_time(char *buf, size_t size)
  */
 int main(void)
 {
-    int sockfd;
+    int sockfd, accepted_fd;
     struct addrinfo hints, *servinfo, *p;
+    struct sockaddr_storage client_addr;
+    socklen_t sin_size;
     int receive;
     int yes = 1;
+    char client_ip[INET6_ADDRSTRLEN];
+    char current_time[26];
+    char *time_str;
     int err = 0;
 
     memset(&hints, 0, sizeof hints);
@@ -90,5 +98,44 @@ int main(void)
 
     freeaddrinfo(servinfo);
 
+    if (p == NULL)
+    {
+        fprintf(stderr, "server: failed to bind\n");
+        exit(1);
+    }
+
+    err = listen(sockfd, BACKLOG);
+    if (err == -1)
+    {
+        perror("listen");
+        exit(1);
+    }
+
+    printf("server: waiting for connections...\n");
+
+    sin_size = sizeof client_addr;
+    accepted_fd = accept(sockfd, (struct sockaddr *)&client_addr, &sin_size);
+    if (accepted_fd == -1)
+    {
+        perror("accept");
+        exit(1);
+    }
+
+    inet_ntop(
+        client_addr.ss_family,
+        get_in_addr((struct sockaddr *)&client_addr),
+        client_ip,
+        sizeof client_ip);
+    printf("server: got connection from %s\n", client_ip);
+
+    printf("server: sent response to %s\n", client_ip);
+    time_str = get_current_time(current_time, sizeof current_time);
+    send(accepted_fd, time_str, strlen(time_str), 0);
+
+    printf("server: connection closed %s\n", client_ip);
+    close(accepted_fd);
+    close(sockfd);
+
+    printf("server: shutdown\n");
     return 0;
 }
