@@ -11,6 +11,39 @@
 #define PORT "8080"
 #define BACKLOG 10
 
+typedef struct
+{
+    int status_code;
+    const char *content_type;
+    int content_length;
+} HttpResponseHead;
+
+void build_http_header(char *buf, size_t size, HttpResponseHead *head)
+{
+    const char *status_text;
+
+    switch (head->status_code)
+    {
+    case 200:
+        status_text = "OK";
+        break;
+    default:
+        status_text = "Unknown";
+        break;
+    }
+
+    snprintf(buf, size,
+             "HTTP/1.1 %d %s\r\n"
+             "Content-Type: %s\r\n"
+             "Content-Length: %d\r\n"
+             "Connection: close"
+             "\r\n",
+             head->status_code,
+             status_text,
+             head->content_type,
+             head->content_length);
+}
+
 /**
  * get sockaddr, IPv4 or Ipv6;
  * return : struct in_addr*
@@ -54,6 +87,7 @@ int main(void)
     char client_ip[INET6_ADDRSTRLEN];
     char current_time[26];
     char *time_str;
+    char header_buffer[512];
     int err = 0;
 
     memset(&hints, 0, sizeof hints);
@@ -130,6 +164,15 @@ int main(void)
 
     printf("server: sent response to %s\n", client_ip);
     time_str = get_current_time(current_time, sizeof current_time);
+
+    HttpResponseHead head = {
+        .status_code = 200,
+        .content_type = "text/plain",
+        .content_length = strlen(time_str),
+    };
+    build_http_header(header_buffer, sizeof header_buffer, &head);
+
+    send(accepted_fd, header_buffer, strlen(header_buffer), 0);
     send(accepted_fd, time_str, strlen(time_str), 0);
 
     printf("server: connection closed %s\n", client_ip);
