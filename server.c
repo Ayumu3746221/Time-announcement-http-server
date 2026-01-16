@@ -1,12 +1,15 @@
+#include <errno.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <netdb.h>
 #include <time.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 
 #define PORT "8080"
 #define BACKLOG 10
@@ -42,6 +45,18 @@ void build_http_header(char *buf, size_t size, HttpResponseHead *head)
              status_text,
              head->content_type,
              head->content_length);
+}
+
+void sig_child_handler(int s)
+{
+    (void)s;
+
+    int save_errno = errno;
+
+    while (waitpid(-1, NULL, WNOHANG) > 0)
+        ;
+
+    errno = save_errno;
 }
 
 /**
@@ -81,6 +96,7 @@ int main(void)
     int sockfd, accepted_fd;
     struct addrinfo hints, *servinfo, *p;
     struct sockaddr_storage client_addr;
+    struct sigaction sa;
     socklen_t sin_size;
     int receive;
     int yes = 1;
@@ -145,40 +161,66 @@ int main(void)
         exit(1);
     }
 
-    printf("server: waiting for connections...\n");
-
-    sin_size = sizeof client_addr;
-    accepted_fd = accept(sockfd, (struct sockaddr *)&client_addr, &sin_size);
-    if (accepted_fd == -1)
+    sa.sa_handler = sig_child_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1)
     {
-        perror("accept");
+        perror("sigaction");
         exit(1);
     }
 
-    inet_ntop(
-        client_addr.ss_family,
-        get_in_addr((struct sockaddr *)&client_addr),
-        client_ip,
-        sizeof client_ip);
-    printf("server: got connection from %s\n", client_ip);
+    printf("server: waiting for connections...\n");
 
-    printf("server: sent response to %s\n", client_ip);
-    time_str = get_current_time(current_time, sizeof current_time);
+    while (1)
+    {
+        sin_size = sizeof client_addr;
+        accepted_fd = accept(sockfd, (struct sockaddr *)&client_addr, &sin_size);
+        if (accepted_fd == -1)
+        {
+            perror("accept");
+            exit(1);
+        }
 
-    HttpResponseHead head = {
-        .status_code = 200,
-        .content_type = "text/plain",
-        .content_length = strlen(time_str),
-    };
-    build_http_header(header_buffer, sizeof header_buffer, &head);
+        inet_ntop(
+            client_addr.ss_family,
+            get_in_addr((struct sockaddr *)&client_addr),
+            client_ip,
+            sizeof client_ip);
+        printf("server: got connection from %s\n", client_ip);
 
-    send(accepted_fd, header_buffer, strlen(header_buffer), 0);
-    send(accepted_fd, time_str, strlen(time_str), 0);
+        printf("server: sent response to %s\n", client_ip);
+        time_str = get_current_time(current_time, sizeof current_time);
 
-    printf("server: connection closed %s\n", client_ip);
-    close(accepted_fd);
-    close(sockfd);
+        HttpResponseHead head = {
+            .status_code = 200,
+            .content_type = "text/plain",
+            .content_length = strlen(time_str),
+        };
+        build_http_header(header_buffer, sizeof header_buffer, &head);
 
-    printf("server: shutdown\n");
+        pid_t pid = fork();
+        if (pid == -1)
+        {
+            // this is err process
+            perror("fork");
+            close(accepted_fd);
+            continue;
+        }
+        if (pid == 0)
+        {
+            // this is child process
+            close(sockfd);
+
+            send(accepted_fd, header_buffer, strlen(header_buffer), 0);
+            send(accepted_fd, time_str, strlen(time_str), 0);
+
+            close(accepted_fd);
+            exit(0);
+        }
+
+        close(accepted_fd);
+    }
+
     return 0;
 }
